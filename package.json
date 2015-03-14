@@ -1,0 +1,9 @@
+{
+  "name": "zefti-analytics-middleware",
+  "description": "Zefti Analytics Middleware",
+  "author": "Ryan Ogle",
+  "dependencies": {
+  },
+  "private": false,
+  "version": "0.0.1"
+}

@@ -6,9 +6,10 @@ var locationLib = require('./lib/location.js');
 var timers = {count:{}, unqiue:{}, retry:{}};
 
 function main(options, dependencies) {
-  console.log('deps in analytics middleware:');
-  console.log(dependencies);
+  //console.log('deps in analytics middleware:');
+  //console.log(dependencies);
   var collector = dependencies.collector;
+  var geo = dependencies.geo;
 
   var count = countLib(options);
   var unique = uniqueLib(options);
@@ -27,7 +28,7 @@ function main(options, dependencies) {
   for (var key in options) {
     if (methods[key]) {
       selectedMethods[key] = methods[key];
-      selectedMethodFields[key] = options[key];
+      selectedMethodFields[key] = options[key]; //redundant to options
     }
   }
 
@@ -44,13 +45,12 @@ function main(options, dependencies) {
     });
   }
 
-  var locationLookup = '';
-  if (allFields.city) locationLookup = locationLookup + 'City';
-  if (allFields.county) locationLookup = locationLookup + 'County';
-  if (allFields.state) locationLookup = locationLookup + 'State';
-  if (allFields.country) locationLookup = locationLookup + 'Country';
-  var locationLookupByLatLon = locationLookup = 'get' + locationLookup + 'ByLatLon';
-  var locationLookupByIpAddress = 'get' + locationLookup + 'ByIpAddress';
+  console.log('selectedMethods::');
+  console.log(selectedMethods);
+  console.log('selectedMethodFields::');
+  console.log(selectedMethodFields);
+  console.log('allFields::');
+  console.log(allFields);
 
 
   /*
@@ -58,19 +58,28 @@ function main(options, dependencies) {
    */
   setInterval(function(){
     var now = new Date();
-    var sec = now.getTime()/1000;
+    var sec = Math.round(now.getTime()/1000);
     if (timers.count || timers.unique){
       var record = {time:sec, lastTry: sec, retryCount:0};
+      console.log('timers are:');
+      console.log(timers);
       if (timers.count) record.count = timers.count;
       if (timers.unique) record.unique = timers.unique;
       timers.retry[sec] = record;
       timers.count = {};
       timers.unique = {};
+      console.log('collector - sending a record');
       collector.sendRecord(record, function(err, result){
+        /*console.log('err is:');
+        console.log(err);
+        console.log('result is:');
+        console.log(result.body);*/
         //TODO: should only log error when occurs, and will pickup by recurring process (move to general logger)
         if (err) {
           console.log(err);
         } else {
+          console.log('deleting');
+
           delete timers[record.time];
         }
 
@@ -102,38 +111,61 @@ function main(options, dependencies) {
 
 
   return function(payload) {
-    //TODO: make it so that it only queries the city/county/state/country that it needs (not all if any are missing)
-    if ((allFields.city && !payload.city) || (allFields.county && !payload.county) || (allFields.state && !payload.state) || allFields.country && !payload.country) {
-      var locationQuery = null;
-      var criteria = null;
-      if (payload.ipAddress) {
-        locationQuery = locationLookupByIpAddress;
-        criteria = payload.ipAddress;
+    geoLookup(payload, function(err, data){
+      //TODO: change to standard error logger
+      if (err) console.log(err);
+      if (data) {
+        for (var key in data) {
+          payload[key] = data[key];
+        }
       }
-      if (payload.lat && payload.lon) {
-        locationQuery = locationLookupByLatLon;
-        criteria = {lat:payload.lat, lon:payload.lon};
+      for (var key in selectedMethods) {
+        selectedMethods[key](payload, timers, selectedMethodFields[key]);
       }
+    });
+  };
 
-      if (locationQuery && criteria) {
-        locationQuery(criteria, function (err, data) {
-          //TODO: should probably not fail because of bad lookup, just log?
-          if (err) return errorHandler(err);
+  function geoLookup(payload, cb){
+    var locationFlag = null;
+    var locationQuery = 'get';
+    var criteria = null;
 
-          for (var key in data) {
-            payload[key] = data[key];
-          }
+    if (allFields.city && !payload.city) {
+      locationQuery = locationLookup + 'City';
+      locationFlag = true;
+    }
+    if (allFields.county && !payload.county) {
+      locationQuery = locationLookup + 'County';
+      locationFlag = true;
+    }
+    if (allFields.state && !payload.state) {
+      locationQuery = locationLookup + 'State';
+      locationFlag = true;
+    }
+    if (allFields.country && !payload.country) {
+      locationQuery = locationLookup + 'Country';
+      locationFlag = true;
+    }
 
-          for (var key in selectedMethods) {
-            selectedMethods[key](payload, timers, selectedMethodFields[key]);
-          }
+    if (payload.lat && payload.lon) {
+      locationQuery = locationLookup + 'ByLatLon';
+      criteria = {lat:payload.lat, lon:payload.lon};
+    } else if (payload.ipAddress) {
+      locationQuery = locationLookup + 'ByIpAddress';
+      criteria = payload.ipAddress;
+    }
 
-        });
-      }
+    if (locationFlag && criteria) {
+      geo[locationQuery](criteria, function(err, data){
+        return cb(err, data);
+      });
+    } else {
+      return cb(null, null);
     }
   }
-
 }
+
+
 
 
 module.exports = {
